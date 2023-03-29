@@ -1,5 +1,4 @@
 discord.py==2.2.2
-gcld3==3.0.13
 matplotlib==3.7.1
 numpy==1.24.2
 openai==0.27.1

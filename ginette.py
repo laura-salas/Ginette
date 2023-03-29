@@ -31,7 +31,7 @@ blacklisted_langs = [language.Language.ESPERANTO]
 ################################
 description = "A discord bot that uses GPT3 API to converse with users. "
 TOKEN = os.getenv('DISCORD_API')
-AUTHORIZED_CHANNEL = os.getenv('AUTHORIZED_CHANNEL') 
+AUTHORIZED_CHANNEL = int(os.getenv('AUTHORIZED_CHANNEL')) 
 # BOT_NAME = "GPTBot@Yeetcode"
 # discord stuff
 
@@ -326,5 +326,5 @@ async def on_ready():
     response = await getBotResponse(parse_messages(answers.get_last_n_tokens(2000).messages))
     await channel.send(response)
     
-
 client.run(TOKEN)
+
