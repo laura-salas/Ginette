@@ -1,19 +1,17 @@
+import asyncio
+import discord
+from discord.ext import commands 
+from dotenv import load_dotenv 
+from enum import Enum
 import os
-from dotenv import load_dotenv
+import random 
+from typing import List
 
+# local modules 
 from chatter import *
 from faq import *
 
-import discord
-import random 
-import asyncio
-from typing import List
-from enum import Enum
- 
-from discord.ext import commands 
-
 load_dotenv()
-
 
 start_sequence = "\nA:"
 restart_sequence = "\n\nQ: "
@@ -51,8 +49,13 @@ async def on_message(message):
         if message.channel.id == client.get_channel(CHATTER_CHANNEL).id:
             await chat_with_ginette(message, client)
         # faq handling 
-        elif message.channel.id == client.get_channel(FAQ_CHANNEL).id:
+        # elif message.channel.id == client.get_channel(FAQ_CHANNEL).id:
+        #     await reply_to_question(message, client, client.get_channel(FAQ_DB))
+        elif client.user in message.mentions:
             await reply_to_question(message, client, client.get_channel(FAQ_DB))
+        # new faq database addition
+        elif message.channel.id == client.get_channel(FAQ_DB).id:
+            await validate_faq_add(message, client, client.get_channel(FAQ_DB))
 
 @client.event
 async def on_ready(): 

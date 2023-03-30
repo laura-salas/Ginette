@@ -1,17 +1,18 @@
-import os
-from dotenv import load_dotenv
-
-import openai
-import discord
-import random
-import spacy
 import asyncio
-from typing import List
+import discord
+from discord.ext import commands 
+from dotenv import load_dotenv 
 from enum import Enum
+import os
+import openai  
+import random 
+import spacy   
+from typing import List
+
+# local modules
 from lingua import language, builder
 
-nlp = spacy.load("en_core_web_sm")
-from discord.ext import commands
+nlp = spacy.load("en_core_web_sm") 
 
 # dotenv_path = Path('./.env')
 load_dotenv()
@@ -197,7 +198,6 @@ async def retrieve_n_messages_from_chat_history(n, channel):
                 break
 
 
-  
 fun_facts_norway = [
     "Norway is located in Northern Europe, bordering the North Sea and the North Atlantic Ocean.",
     "It is the second largest oil exporter in the world.",
