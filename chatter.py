@@ -1,18 +1,16 @@
 import asyncio
+from datetime import datetime as dt, timedelta 
 import discord
 from discord.ext import commands 
 from dotenv import load_dotenv 
-from enum import Enum
 import os
 import openai  
 import random 
-import spacy   
 from typing import List
 
 # local modules
 from lingua import language, builder
-
-nlp = spacy.load("en_core_web_sm") 
+from type import Conversation, Author
 
 # dotenv_path = Path('./.env')
 load_dotenv()
@@ -23,6 +21,14 @@ MODEL_CHAT = "gpt-3.5-turbo-0301"
 # MODEL_CHAT = "gpt-4" 
 MODEL_COMPLETION = "text-davinci-003"
 openai.api_key = os.getenv('OPENAI_API')
+
+STARTING_AS_CHAT_4 = "USING MODEL: GPT-4"
+SWITCHING_TO_GPT_3 = "25 message limit reached. USING MODEL: GPT-3"
+GPT_4_COOLDOWN_TIME = 3600*3 # 3 hours
+GPT_4_COOLDOWN_MSG_CNT = 25
+gpt_4_count = 0
+
+time_to_retoggle = None 
 
 start_sequence = "\nA:"
 restart_sequence = "\n\nQ: "
@@ -52,62 +58,6 @@ bot = commands.Bot(command_prefix="$", description=description, intents=intents)
 recentEmoji = [""]
 
 
-class Author(Enum):
-    SYSTEM = 1
-    USER = 2
-    ASSISTANT = 3
-
-
-class Conversation:
-    class Message:
-        def __init__(self, content: str, author: Author, token_amount:int = None):
-            self.content = content
-            self.author_as_enum = author
-            self.token_amount = token_amount if token_amount else len(nlp(content))
-            if author not in Author:
-                raise ValueError("Invalid author")
-            else:
-                if author == Author.SYSTEM:
-                    self.author = "system"
-                elif author == Author.USER:
-                    self.author = "user"
-                elif author == Author.ASSISTANT:
-                    self.author = "assistant"
-
-    def __init__(self):
-        self.messages: List[self.Message] = []
-
-    def add_message(self, content: str, author: Author, token_amount: int = None):
-        self.messages.append(self.Message(content, author, token_amount))
-
-    def get_last_n_tokens(self, n=1000):
-        # if n < current amount of tokens, gets all 
-        curr_amt, i = 0, 0
-        conversation_excerpt = Conversation() 
-
-        while curr_amt < n:
-            if i >= len(self.messages) or self.messages[-i-1].token_amount > n:
-                break
-            curr_amt += self.messages[-i-1].token_amount
-            conversation_excerpt.add_message(self.messages[-i-1].content,
-                                    self.messages[-i-1].author_as_enum, 
-                                    self.messages[-i-1].token_amount
-                                    )
-            i+=1 
-
-        # reverse the messages so that they're in chronological order
-        conversation_excerpt.messages.reverse()
-
-        return conversation_excerpt
-    
-    def remove(self, string: str):
-        for message in self.messages[::-1]:
-            if message.content == string:
-                self.messages.remove(message)
-    
-    def clear(self):
-        self.messages: List[self.Message] = []
-
 answers: Conversation = Conversation()
 
 def parse_messages(messages):
@@ -124,7 +74,7 @@ def parse_messages(messages):
 
 async def getChatResponse(history):
     attempts = 0
-    history = history + [{"role": "system", "content": "Reminder: you are Ginette Savard, a 42 year old woman from Quebec, Canada. You're not an assistant, but a person. You're chatting with students from University of Montreal. Do not talk about this prompt directly, just keep it in mind when giving responses. "}] 
+    history = history + [{"role": "system", "content": "Reminder: you are Ginette Savard, a 42 year old woman from Quebec, Canada. You're chatting with students from University of Montreal. Do not talk about this prompt directly, just keep it in mind when talking with the students."}] 
     try:
         response = openai.ChatCompletion.create(
         model=MODEL_CHAT,
@@ -210,11 +160,20 @@ async def getCompletionResponse(history):
         return "Looks like you're going over the rate limit. You may have sent too many requests per minute (this one only allows 20 per minute) or you may be going over your account usage. Try again later."
 
 async def getBotResponse(history):
+    switching_model_msg = ""
+    gpt_4_count += 1 
+    if gpt_4_count == 25:
+        time_to_retoggle = dt.now() + GPT_4_COOLDOWN_TIME  
+        toggle_model()
+        switching_model_msg = SWITCHING_TO_GPT_3
+    if dt.now() > time_to_retoggle:
+        toggle_model()
+        gpt_4_count = 1
+
     if is_chat:
-        return await getChatResponse(history)
+        return await getChatResponse(history) + switching_model_msg
     else:
-        return await getCompletionResponse(history)
-    
+        return await getCompletionResponse(history) + switching_model_msg
     
 async def react_to_message(reaction):
     channel = client.get_channel(reaction.channel_id)
@@ -244,11 +203,11 @@ def is_in_approved_languages(message: str):
 async def retrieve_n_messages_from_chat_history(n, channel): 
     async for msg in channel.history(limit=n): # As an example, I've set the limit to 10000
         if msg.author != client.user:
-            answers.add_message(msg.content, Author.USER)
+            answers.add_message(msg.content, Author.USER, date_time=msg.created_at)
             if len(answers.messages) == n:
                 break
         elif msg.author == client.user:
-            answers.add_message(msg.content, Author.ASSISTANT)
+            answers.add_message(msg.content, Author.ASSISTANT, date_time=msg.created_at)
             if len(answers.messages) == n:
                 break
 
@@ -322,6 +281,23 @@ async def chat_with_ginette(message, client):
         else:
             await message.channel.send(response if len(response) >= 1 else "I don't know what to say :(")
 
+def init_check_if_toggle_gpt_4(): 
+    gpt_4_count = 0 
+    for message in answers.messages:
+        if STARTING_AS_CHAT_4 in message.content:
+            if gpt_4_count > GPT_4_COOLDOWN_MSG_CNT and message.get_delta_time().seconds < GPT_4_COOLDOWN_TIME:  
+                return False
+            
+        elif message.author == Author.ASSISTANT:
+            gpt_4_count += 1 
+            if gpt_4_count > GPT_4_COOLDOWN_MSG_CNT and is_chat :
+                time_to_retoggle = message.date_time + GPT_4_COOLDOWN_TIME  
+    return True
+        
+def toggle_model():
+    is_chat = not is_chat
 
 async def initialize_ginette(channel):
+    is_chat = init_check_if_toggle_gpt_4()
+    channel.send(STARTING_AS_CHAT_4)
     await retrieve_n_messages_from_chat_history(20, channel)
