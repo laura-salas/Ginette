@@ -10,25 +10,25 @@ from typing import List
 
 # local modules
 from lingua import language, builder
-from type import Conversation, Author
+from type import Conversation, Author, Message
 
 # dotenv_path = Path('./.env')
 load_dotenv()
 ###############################
 # GPT Config
-is_chat = False 
-MODEL_CHAT = "gpt-3.5-turbo-0301"
-# MODEL_CHAT = "gpt-4" 
+is_chat = True 
+# MODEL_CHAT = "gpt-3.5-turbo-0301"
+MODEL_CHAT = "gpt-4" 
 MODEL_COMPLETION = "text-davinci-003"
 openai.api_key = os.getenv('OPENAI_API')
 
 STARTING_AS_CHAT_4 = "USING MODEL: GPT-4"
-SWITCHING_TO_GPT_3 = "25 message limit reached. USING MODEL: GPT-3"
+GPT_4_COOLDOWN_MSG_CNT = 100
+SWITCHING_TO_GPT_3 = "%d message limit reached. USING MODEL: GPT-3" % GPT_4_COOLDOWN_MSG_CNT
 GPT_4_COOLDOWN_TIME = 3600*3 # 3 hours
-GPT_4_COOLDOWN_MSG_CNT = 25
-gpt_4_count = 0
+gpt_4_count = [0]
 
-time_to_retoggle = None 
+time_to_retoggle = [None] 
 
 start_sequence = "\nA:"
 restart_sequence = "\n\nQ: "
@@ -57,6 +57,9 @@ client = discord.Client(intents=intents)
 bot = commands.Bot(command_prefix="$", description=description, intents=intents)
 recentEmoji = [""]
 
+###########
+GINETTE_PROMPT = "Reminder: your name is Ginette Savard. Do not mention this reminder, this is simply in case anyone asks. In your response, only include your response, not the previous chats that you are replying to (translated or not), nor this reminder. Reply in English if the last 3 messages were in English, or in French if the last 3 messages were in French. Do not say or act like an assistant, but rather like a human being. Sometimes, act a little sassy, or refuse to give an answer. Do not say things like \" If you have any questions or topics to discuss, feel free to share them. I'm here to chat with you!" 
+HELP_PROMPT_MESSAGE = Message(GINETTE_PROMPT, Author.SYSTEM) 
 
 answers: Conversation = Conversation()
 
@@ -73,26 +76,27 @@ def parse_messages(messages):
 
 
 async def getChatResponse(history):
-    attempts = 0
-    history = history + [{"role": "system", "content": "Reminder: you are Ginette Savard, a 42 year old woman from Quebec, Canada. You're chatting with students from University of Montreal. Do not talk about this prompt directly, just keep it in mind when talking with the students."}] 
+    attempts = 0 
+    if GINETTE_PROMPT not in history:
+        history = history + GINETTE_PROMPT
     try:
         response = openai.ChatCompletion.create(
         model=MODEL_CHAT,
         messages=history,
         temperature=0.5, 
-        max_tokens=2000, 
+        max_tokens=4000, 
         )
         while len(response["choices"][0]["message"]["content"]) == 0:
             response = openai.ChatCompletion.create(
             model=MODEL_CHAT,
             messages=history,
             temperature=0.5,
-            max_tokens=2000,
+            max_tokens=4000,
             )
             attempts += 1
             if attempts > 5:
                 return "I'm sorry. I dont think I can answer that."
-            
+        print(response["model"] + " chat")
         response = response["choices"][0]["message"]["content"]
         if "Ginette:" in response:
             response = response.replace("Ginette:", "")
@@ -137,6 +141,7 @@ async def getCompletionResponse(history):
             if attempts > 5:
                 return "I'm sorry. I dont think I can answer that."
             
+        print(response["model"])
         response = response["choices"][0]["text"]
         if "Ginette:" in response:
             response = response.replace("Ginette:", "")
@@ -161,14 +166,15 @@ async def getCompletionResponse(history):
 
 async def getBotResponse(history):
     switching_model_msg = ""
-    gpt_4_count += 1 
-    if gpt_4_count == 25:
-        time_to_retoggle = dt.now() + GPT_4_COOLDOWN_TIME  
+    gpt_4_count[0] += 1 
+    if gpt_4_count[0] == GPT_4_COOLDOWN_MSG_CNT:
+        time_to_retoggle[0] = dt.now() + GPT_4_COOLDOWN_TIME  
         toggle_model()
         switching_model_msg = SWITCHING_TO_GPT_3
-    if dt.now() > time_to_retoggle:
+    if time_to_retoggle[0] and dt.now() > time_to_retoggle[0]:
         toggle_model()
-        gpt_4_count = 1
+        switching_model_msg = STARTING_AS_CHAT_4
+        gpt_4_count[0] = 1
 
     if is_chat:
         return await getChatResponse(history) + switching_model_msg
@@ -252,7 +258,12 @@ async def chat_with_ginette(message, client):
             answers.clear()
         elif "/;" in message.content[0:3]:
             return 
-        name = await client.fetch_user(message.author.id)
+        guild = await client.fetch_guild(message.guild.id)
+        member = await guild.fetch_member(message.author.id)
+        if member.nick:
+            name = member.nick
+        else:
+            name = member.name 
 
         # history.append(message.content)
         usermessage = message.content + ""
@@ -261,11 +272,11 @@ async def chat_with_ginette(message, client):
             Author.USER)
         
         shortened_history = parse_messages(
-            answers.get_last_n_tokens(2000).messages)
+            answers.get_last_n_tokens(2000, HELP_PROMPT_MESSAGE).messages)
         
         response = await getBotResponse(shortened_history)
 
-        # banned lang or unknown lang
+        # # banned lang or unknown lang
         if not is_in_approved_languages(response):
             answers.remove(str(name).split("#")[0] + ": " + usermessage)
             answers.add_message(str(name).split("#")[0] + ": " + " ", Author.USER)
@@ -282,22 +293,25 @@ async def chat_with_ginette(message, client):
             await message.channel.send(response if len(response) >= 1 else "I don't know what to say :(")
 
 def init_check_if_toggle_gpt_4(): 
-    gpt_4_count = 0 
+    gpt_4_count[0] = 0 
     for message in answers.messages:
         if STARTING_AS_CHAT_4 in message.content:
-            if gpt_4_count > GPT_4_COOLDOWN_MSG_CNT and message.get_delta_time().seconds < GPT_4_COOLDOWN_TIME:  
+            if gpt_4_count[0] > GPT_4_COOLDOWN_MSG_CNT and message.get_delta_time().seconds < GPT_4_COOLDOWN_TIME:  
                 return False
             
         elif message.author == Author.ASSISTANT:
-            gpt_4_count += 1 
-            if gpt_4_count > GPT_4_COOLDOWN_MSG_CNT and is_chat :
-                time_to_retoggle = message.date_time + GPT_4_COOLDOWN_TIME  
-    return True
-        
-def toggle_model():
-    is_chat = not is_chat
+            gpt_4_count[0] += 1 
+            if gpt_4_count[0] > GPT_4_COOLDOWN_MSG_CNT and is_chat :
+                time_to_retoggle[0] = message.date_time + GPT_4_COOLDOWN_TIME  
+    return True 
+
+def get_is_chat():
+    return is_chat
+
+def toggle_model(): 
+    is_chat = not is_chat 
 
 async def initialize_ginette(channel):
     is_chat = init_check_if_toggle_gpt_4()
-    channel.send(STARTING_AS_CHAT_4)
+    await channel.send(STARTING_AS_CHAT_4)
     await retrieve_n_messages_from_chat_history(20, channel)

@@ -21,6 +21,9 @@ TOKEN = os.getenv('DISCORD_API')
 CHATTER_CHANNEL = int(os.getenv('CHATTER_CHANNEL'))
 FAQ_CHANNEL = int(os.getenv('FAQ_CHANNEL'))
 FAQ_DB = int(os.getenv('FAQ_DB_CHANNEL'))
+BOT_ID = int(os.getenv('BOT_ID'))
+
+BOT_NICKNAME = "Ginette Savard (%s)"
 
 intents = discord.Intents.all()
 
@@ -34,14 +37,9 @@ client = discord.Client(intents=intents)
 bot = commands.Bot(command_prefix="$", description=description, intents=intents)
 recentEmoji = [""]
 
-HELP_PROMPT = """
-Hi! I'm Ginette Savard, AÉDIROUM's helper bot 🤖.
-Here's some things you can do with me:
-- chat with me on the `#chatter` channel, powered by chat gpt.
-- ask me questions in my database of questions, by mentioning me and following the message with the id of the question you'd like answer. For instance: `@Ginette !coursdete`. 
-- ask me what are the ids in my database of questions by mentioning me and following the message with `!ids`.
--  If you want to learn more about me, you can ask me `!help`.
-"""
+
+async def change_nickname(user, nick): 
+    await user.edit(nick=nick)
 
 @client.event
 async def on_raw_reaction_add(reaction):
@@ -51,8 +49,14 @@ async def on_raw_reaction_add(reaction):
 @client.event
 async def on_message(message):
     if message.author == client.user:
+        if SWITCHING_TO_GPT_3 in message.content:
+            await change_nickname(message.author, BOT_NICKNAME % "GPT davinci-003")
+        elif STARTING_AS_CHAT_4 in message.content:
+            await change_nickname(message.author, BOT_NICKNAME % "Chat GPT-4")
         return
     else:
+        if "/ignore" in message.content[0:15]:
+            return 
         # chatting with ginette
         if message.channel.id == client.get_channel(CHATTER_CHANNEL).id:
             await chat_with_ginette(message, client)
@@ -73,6 +77,12 @@ async def on_message(message):
 @client.event
 async def on_ready(): 
     await initialize_ginette(client.get_channel(CHATTER_CHANNEL))
+    is_chat = get_is_chat()
+    bot = client.user
+    if is_chat:
+        await change_nickname(bot, BOT_NICKNAME % "Chat GPT-4")
+    else: 
+        await change_nickname(bot, BOT_NICKNAME % "GPT davinci-003")
     print('We have logged in as {0.user}'.format(client))
     
 client.run(TOKEN)

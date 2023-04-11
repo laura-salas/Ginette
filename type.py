@@ -38,7 +38,7 @@ class Conversation:
     def add_message(self, content: str, author: Author, token_amount: int = None, date_time: str = ""):
         self.messages.append(self.Message(content, author, token_amount, date_time))
 
-    def get_last_n_tokens(self, n=1000):
+    def get_last_n_tokens(self, n=1000, additional_prompt: Message = None):
         # if n < current amount of tokens, gets all 
         curr_amt, i = 0, 0
         conversation_excerpt = Conversation() 
@@ -55,6 +55,12 @@ class Conversation:
 
         # reverse the messages so that they're in chronological order
         conversation_excerpt.messages.reverse()
+
+        if additional_prompt:
+            conversation_excerpt.add_message(additional_prompt.content,
+                                    additional_prompt.author_as_enum, 
+                                    additional_prompt.token_amount
+                                    )
 
         return conversation_excerpt
     
