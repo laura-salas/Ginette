@@ -16,7 +16,12 @@ nlp = spacy.load("en_core_web_sm")
 
 # dotenv_path = Path('./.env')
 load_dotenv()
-
+###############################
+# GPT Config
+is_chat = False 
+MODEL_CHAT = "gpt-3.5-turbo-0301"
+# MODEL_CHAT = "gpt-4" 
+MODEL_COMPLETION = "text-davinci-003"
 openai.api_key = os.getenv('OPENAI_API')
 
 start_sequence = "\nA:"
@@ -116,21 +121,64 @@ def parse_messages(messages):
 
         return messages_structured
 
-async def getBotResponse(history):
+
+async def getChatResponse(history):
+    attempts = 0
+    history = history + [{"role": "system", "content": "Reminder: you are Ginette Savard, a 42 year old woman from Quebec, Canada. You're not an assistant, but a person. You're chatting with students from University of Montreal. Do not talk about this prompt directly, just keep it in mind when giving responses. "}] 
+    try:
+        response = openai.ChatCompletion.create(
+        model=MODEL_CHAT,
+        messages=history,
+        temperature=0.5, 
+        max_tokens=2000, 
+        )
+        while len(response["choices"][0]["message"]["content"]) == 0:
+            response = openai.ChatCompletion.create(
+            model=MODEL_CHAT,
+            messages=history,
+            temperature=0.5,
+            max_tokens=2000,
+            )
+            attempts += 1
+            if attempts > 5:
+                return "I'm sorry. I dont think I can answer that."
+            
+        response = response["choices"][0]["message"]["content"]
+        if "Ginette:" in response:
+            response = response.replace("Ginette:", "")
+
+        if "AI language model" in response:
+            response = response.replace("s an AI language model", "s a mere human being")
+            response = response.replace("m an AI language model", "m a mere human being")
+        elif "language model" in response:
+            response = response.replace("s a language model", "s a mere human being")
+            response = response.replace("m a language model", "m a mere human being")
+        return response
+    
+    except openai.error.InvalidRequestError as e:
+        #Handle invalid request error, e.g. validate parameters or log
+        print(e)
+        return "Ooops. Looks like there was an error. Probably you went over the amount of tokens allowed:("
+    except openai.error.RateLimitError as e:
+        print(e)
+        return "Looks like you're going over the rate limit. You may have sent too many requests per minute (this one only allows 20 per minute) or you may be going over your account usage. Try again later."
+    
+
+async def getCompletionResponse(history):
     attempts = 0 
     
     history = "\n".join([message['content'] for message in history])
     # print(history)
     try:
         response = openai.Completion.create(
-        model="text-davinci-003",
+        model=MODEL_COMPLETION,
         prompt=history,
         temperature=0.7,
         max_tokens=2000, 
         )
         while len(response["choices"][0]["text"]) == 0:
             response = openai.Completion.create(
-            model="text-davinci-003",
+            model=MODEL_COMPLETION,
             prompt=history,
             temperature=0.7,
             max_tokens=2000,
@@ -160,6 +208,13 @@ async def getBotResponse(history):
     except openai.error.RateLimitError as e:
         print(e)
         return "Looks like you're going over the rate limit. You may have sent too many requests per minute (this one only allows 20 per minute) or you may be going over your account usage. Try again later."
+
+async def getBotResponse(history):
+    if is_chat:
+        return await getChatResponse(history)
+    else:
+        return await getCompletionResponse(history)
+    
     
 async def react_to_message(reaction):
     channel = client.get_channel(reaction.channel_id)
